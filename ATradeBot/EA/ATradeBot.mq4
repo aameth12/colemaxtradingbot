@@ -52,6 +52,10 @@ input int    InpSMA200Period    = 200;    // Long-term SMA period (trend filter)
 input int    InpRSIPeriod       = 14;     // RSI period
 input double InpRSIOverbought   = 70.0;   // RSI overbought level
 input double InpRSIOversold     = 30.0;   // RSI oversold level
+input double InpRSIBullMin      = 45.0;   // BullishSignal: RSI lower bound (upward momentum confirmed)
+input double InpRSIBullMax      = 65.0;   // BullishSignal: RSI upper bound (not yet stretched)
+input double InpRSIBearMin      = 35.0;   // BearishSignal: RSI lower bound (not yet exhausted)
+input double InpRSIBearMax      = 55.0;   // BearishSignal: RSI upper bound (downward momentum confirmed)
 
 // --- MACD parameters ---
 input int    InpMACDFastEMA     = 12;     // MACD fast EMA period
@@ -430,40 +434,119 @@ double GetLotSize()
 
 
 //--- 6d. BullishSignal -----------------------------------------------
-// Returns true when all configured indicators collectively agree on a
-// long entry. All values come from the g_* globals set by RefreshIndicators().
+// Returns true only when ALL seven conditions are satisfied on the last
+// closed candle. Uses the g_* globals populated by RefreshIndicators().
+// Short-circuit: each failed condition exits immediately (no wasted checks).
 bool BullishSignal()
   {
-   // TODO: implement confluence checks, e.g.:
-   //   - Price above g_sma200            (uptrend filter)
-   //   - g_ema9 > g_ema21               (fast MA above slow MA)
-   //   - g_macdMain > g_macdSignal      (MACD bullish crossover)
-   //   - g_rsi > 50 && g_rsi < InpRSIOverbought
-   //   - g_stochMain > g_stochSignal && g_stochMain < InpStochOverbought
-   //   - g_adx > InpADXMinStrength      (trend has sufficient strength)
-   //   - g_diPlus > g_diMinus           (positive directional bias)
-   //   - Close[1] > g_bbMiddle          (price above BB basis)
+   // --- Symbol filter: only trade the approved asset list ---
+   if(_Symbol != "XAUUSD" && _Symbol != "AAPL" &&
+      _Symbol != "TSLA"   && _Symbol != "NVDA" && _Symbol != "AMZN")
+      return(false);
 
-   return(false);
+   // --- Timeframe filter: M5 (primary signal) and M15 (trend confirmation) only ---
+   if(Period() != PERIOD_M5 && Period() != PERIOD_M15)
+      return(false);
+
+   // Spread in price units, used by the ATR volatility check (condition 7).
+   double spreadPrice = MarketInfo(_Symbol, MODE_SPREAD) * _Point;
+
+   // 1. Trend alignment — full MA stack must be bullish.
+   //    Close[1] > EMA9  : price momentum above the fast average.
+   //    EMA9   > EMA21   : fast average above slow — short-term uptrend.
+   //    EMA21  > SMA200  : slow average above long-term — macro bull structure.
+   if(Close[1] <= g_ema9)   return(false);
+   if(g_ema9   <= g_ema21)  return(false);
+   if(g_ema21  <= g_sma200) return(false);
+
+   // 2. RSI in the bullish sweet spot [InpRSIBullMin, InpRSIBullMax].
+   //    Above minimum : momentum is present and biased upward.
+   //    Below maximum : not yet stretched or overbought — room to run.
+   if(g_rsi < InpRSIBullMin || g_rsi > InpRSIBullMax) return(false);
+
+   // 3. MACD confirming bullish momentum on two levels:
+   //    Main > Signal : histogram is positive — recent bullish crossover.
+   //    Main > 0      : both fast and slow EMAs agree the bias is up.
+   if(g_macdMain <= g_macdSignal) return(false);
+   if(g_macdMain <= 0.0)          return(false);
+
+   // 4. Stochastic below the overbought threshold.
+   //    If %K is already above InpStochOverbought the up-move may be exhausted;
+   //    we want to enter while there is still room for price to extend higher.
+   if(g_stochMain >= InpStochOverbought) return(false);
+
+   // 5. ADX above the minimum strength threshold.
+   //    A reading below InpADXMinStrength indicates a ranging / choppy market
+   //    where trend-following entries have poor expectancy.
+   if(g_adx <= InpADXMinStrength) return(false);
+
+   // 6. Close above the Bollinger Band middle (basis SMA).
+   //    Price in the upper half of the band confirms bullish mean-reversion bias.
+   if(Close[1] <= g_bbMiddle) return(false);
+
+   // 7. ATR > 3 × spread.
+   //    Ensures the current true-range movement is large enough to overcome
+   //    transaction costs and still produce a meaningful scalp profit.
+   if(g_atr <= spreadPrice * 3.0) return(false);
+
+   return(true);
   }
 
 
 //--- 6e. BearishSignal -----------------------------------------------
-// Returns true when all configured indicators collectively agree on a
-// short entry. Mirror logic of BullishSignal().
+// Returns true only when ALL seven conditions are satisfied on the last
+// closed candle. Exact directional mirror of BullishSignal().
 bool BearishSignal()
   {
-   // TODO: implement confluence checks, e.g.:
-   //   - Price below g_sma200
-   //   - g_ema9 < g_ema21
-   //   - g_macdMain < g_macdSignal
-   //   - g_rsi < 50 && g_rsi > InpRSIOversold
-   //   - g_stochMain < g_stochSignal && g_stochMain > InpStochOversold
-   //   - g_adx > InpADXMinStrength
-   //   - g_diMinus > g_diPlus
-   //   - Close[1] < g_bbMiddle
+   // --- Symbol filter: only trade the approved asset list ---
+   if(_Symbol != "XAUUSD" && _Symbol != "AAPL" &&
+      _Symbol != "TSLA"   && _Symbol != "NVDA" && _Symbol != "AMZN")
+      return(false);
 
-   return(false);
+   // --- Timeframe filter: M5 (primary signal) and M15 (trend confirmation) only ---
+   if(Period() != PERIOD_M5 && Period() != PERIOD_M15)
+      return(false);
+
+   // Spread in price units, used by the ATR volatility check (condition 7).
+   double spreadPrice = MarketInfo(_Symbol, MODE_SPREAD) * _Point;
+
+   // 1. Trend alignment — full MA stack must be bearish.
+   //    Close[1] < EMA9  : price momentum below the fast average.
+   //    EMA9   < EMA21   : fast average below slow — short-term downtrend.
+   //    EMA21  < SMA200  : slow average below long-term — macro bear structure.
+   if(Close[1] >= g_ema9)   return(false);
+   if(g_ema9   >= g_ema21)  return(false);
+   if(g_ema21  >= g_sma200) return(false);
+
+   // 2. RSI in the bearish sweet spot [InpRSIBearMin, InpRSIBearMax].
+   //    Below maximum : momentum is present and biased downward.
+   //    Above minimum : not yet oversold / exhausted — room to fall further.
+   if(g_rsi < InpRSIBearMin || g_rsi > InpRSIBearMax) return(false);
+
+   // 3. MACD confirming bearish momentum on two levels:
+   //    Main < Signal : histogram is negative — recent bearish crossover.
+   //    Main < 0      : both fast and slow EMAs agree the bias is down.
+   if(g_macdMain >= g_macdSignal) return(false);
+   if(g_macdMain >= 0.0)          return(false);
+
+   // 4. Stochastic above the oversold threshold.
+   //    If %K is already below InpStochOversold the down-move may be exhausted;
+   //    we want to enter while there is still room for price to extend lower.
+   if(g_stochMain <= InpStochOversold) return(false);
+
+   // 5. ADX above the minimum strength threshold.
+   //    Same logic as BullishSignal — rejects ranging / low-momentum markets.
+   if(g_adx <= InpADXMinStrength) return(false);
+
+   // 6. Close below the Bollinger Band middle (basis SMA).
+   //    Price in the lower half of the band confirms bearish mean-reversion bias.
+   if(Close[1] >= g_bbMiddle) return(false);
+
+   // 7. ATR > 3 × spread.
+   //    Same transaction-cost filter as BullishSignal.
+   if(g_atr <= spreadPrice * 3.0) return(false);
+
+   return(true);
   }
 
 
