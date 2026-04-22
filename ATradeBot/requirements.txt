@@ -7,6 +7,12 @@ requests>=2.31.0
 pandas>=2.1.0
 numpy>=1.26.0
 
+# Market data (free — no API key required)
+yfinance>=0.2.36
+
+# Technical indicators (free — pure Python / pandas)
+pandas_ta>=0.3.14b
+
 # Telegram notifications
 python-telegram-bot>=20.7
 
