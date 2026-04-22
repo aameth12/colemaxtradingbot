@@ -81,11 +81,10 @@ input int    InpADXPeriod       = 14;     // ADX period
 input double InpADXMinStrength  = 25.0;   // Minimum ADX value to consider trend valid
 
 // --- Session / time filter ---
-input bool   InpUseTimeFilter   = true;   // Restrict trading to defined session hours
-input int    InpSessionStartHr  = 8;      // Session open hour (broker server time)
-input int    InpSessionEndHr    = 20;     // Session close hour (broker server time)
-input bool   InpNoTradeOnFriday = true;   // Block new trades after Friday cutoff
-input int    InpFridayCutoffHr  = 18;     // Last hour to open trades on Friday
+input bool   InpUseTimeFilter    = true;  // Restrict trading to defined session hours
+// Offset added to broker server time to obtain Israel time (UTC+3).
+// Set to 0 if the server is already on UTC+3; set to 3 if server is UTC+0, etc.
+input int    InpServerToILOffset = 0;     // Server → Israel time offset in hours (default 0)
 
 // --- Risk / kill switch ---
 input double InpMaxDailyDrawPct = 5.0;    // Daily drawdown % that triggers kill switch
@@ -113,6 +112,9 @@ datetime g_currentDay           = 0;      // Date of the current trading day
 // --- Kill switch ---
 bool     g_killSwitch           = false;  // Set true to halt all new trade activity
 string   g_killReason           = "";     // Human-readable reason stored for logging
+
+// --- End-of-day tracking ---
+bool     g_eodDone              = false;  // Set true once the 22:00 IL EOD close fires for today
 
 // --- Indicator snapshot (populated each tick by RefreshIndicators) ---
 // Moving averages
@@ -192,11 +194,6 @@ int OnInit()
       Alert(EA_NAME + ": InpADXMinStrength must be between 0 and 100.");
       return(INIT_PARAMETERS_INCORRECT);
      }
-   if(InpSessionStartHr >= InpSessionEndHr)
-     {
-      Alert(EA_NAME + ": InpSessionStartHr must be before InpSessionEndHr.");
-      return(INIT_PARAMETERS_INCORRECT);
-     }
    if(InpMaxDailyDrawPct <= 0 || InpMaxDailyDrawPct > 100)
      {
       Alert(EA_NAME + ": InpMaxDailyDrawPct must be between 0 and 100.");
@@ -221,7 +218,8 @@ int OnInit()
    Print("Magic number : ", InpMagicNumber);
    Print("Lot sizing   : ", InpUseRiskPct ? "Risk-based (" + DoubleToString(InpRiskPct, 1) + "%)" : "Fixed (" + DoubleToString(InpLotSize, 2) + " lots)");
    Print("SL/TP mode   : ", InpUseATRStops ? "ATR-based" : "Fixed pips");
-   Print("Session      : ", InpSessionStartHr, ":00 – ", InpSessionEndHr, ":00 server time");
+   Print("Session (IL) : XAUUSD 10:00-21:00 | Stocks 16:30-21:00 | EOD close 22:00");
+   Print("IL offset    : server + ", InpServerToILOffset, " h = Israel time");
    Print("Kill switch  : daily drawdown > ", InpMaxDailyDrawPct, "%");
    Print("==============================================");
 
@@ -266,8 +264,23 @@ void OnTick()
       g_dailyTradeCount   = 0;
       g_killSwitch        = false;   // reset intraday kill switch on new day
       g_killReason        = "";
+      g_eodDone           = false;   // allow EOD close to fire again on the new day
       Print(EA_NAME + ": New trading day started. Balance reset to ", g_dailyStartBalance);
      }
+
+   // --- End-of-day close at 22:00 IL time ---
+   // Runs on every tick so it fires promptly when the clock crosses 22:00.
+   // g_eodDone prevents repeat calls within the same calendar day.
+   {
+      int rawMin  = TimeHour(TimeCurrent()) * 60 + TimeMinute(TimeCurrent())
+                    + InpServerToILOffset * 60;
+      int ilHourX = (((rawMin % 1440) + 1440) % 1440) / 60;
+      if(ilHourX >= 22 && !g_eodDone)
+        {
+         g_eodDone = true;
+         CloseAllTradesEOD();
+        }
+   }
 
    // --- Kill switch check ---
    // If the kill switch is active, manage existing trades but open nothing new.
@@ -424,30 +437,91 @@ void RefreshIndicators()
 //--- 6b. IsTradingAllowed --------------------------------------------
 // Returns false if any session rule, time filter, or broker condition
 // prevents opening a new trade right now.
+// Prints one diagnostic line per bar showing symbol, IL time, and result.
 bool IsTradingAllowed()
   {
    // --- Broker / terminal checks ---
-   if(!IsTradeAllowed())   return(false);   // EA not authorised to trade
-   if(!IsConnected())      return(false);   // No connection to broker
-   if(IsTradeContextBusy()) return(false);  // Another EA/script is using the trade context
-   if(IsStopped())         return(false);   // Terminal is shutting down
+   if(!IsTradeAllowed())    return(false);
+   if(!IsConnected())       return(false);
+   if(IsTradeContextBusy()) return(false);
+   if(IsStopped())          return(false);
+
+   // --- Convert server time → Israel time (UTC+3) ---
+   // InpServerToILOffset: hours to add to server time to reach IL time.
+   // Uses modular arithmetic so the result stays in [0, 1439] minutes.
+   int rawMin    = TimeHour(TimeCurrent()) * 60 + TimeMinute(TimeCurrent())
+                   + InpServerToILOffset * 60;
+   int ilMinutes = ((rawMin % 1440) + 1440) % 1440;
+   int ilHour    = ilMinutes / 60;
+   int ilMin     = ilMinutes % 60;
+   int ilTotal   = ilHour * 60 + ilMin;   // total IL minutes since midnight
+   int dow       = DayOfWeek();           // 0=Sun, 1=Mon … 5=Fri, 6=Sat
+
+   string timeStr = StringFormat("%02d:%02d IL", ilHour, ilMin);
 
    // --- Session time filter ---
    if(InpUseTimeFilter)
      {
-      int currentHour = TimeHour(TimeCurrent());
-
-      // Block outside configured session window.
-      if(currentHour < InpSessionStartHr || currentHour >= InpSessionEndHr)
+      // Block on Sunday — market gaps.
+      if(dow == 0)
+        {
+         Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+               " — trading BLOCKED (Sunday)");
          return(false);
+        }
 
-      // Block new trades after Friday cutoff.
-      if(InpNoTradeOnFriday && DayOfWeek() == 5 && currentHour >= InpFridayCutoffHr)
-         return(false);
+      bool isXAUUSD = (_Symbol == "XAUUSD");
+      bool isStock  = (_Symbol == "AAPL" || _Symbol == "TSLA" ||
+                       _Symbol == "NVDA" || _Symbol == "AMZN");
 
-      // Block on Sunday (market open gaps).
-      if(DayOfWeek() == 0)
+      if(isXAUUSD)
+        {
+         // XAUUSD session: 10:00–21:00 IL
+         if(ilHour < 10 || ilHour >= 21)
+           {
+            Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+                  " — trading BLOCKED (outside XAUUSD session 10:00-21:00 IL)");
+            return(false);
+           }
+         // Monday: skip first 30 min of session (10:00–10:29)
+         if(dow == 1 && ilTotal < 10 * 60 + 30)
+           {
+            Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+                  " — trading BLOCKED (Monday open buffer until 10:30 IL)");
+            return(false);
+           }
+        }
+      else if(isStock)
+        {
+         // Stock session: 16:30–21:00 IL
+         if(ilTotal < 16 * 60 + 30 || ilHour >= 21)
+           {
+            Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+                  " — trading BLOCKED (outside stock session 16:30-21:00 IL)");
+            return(false);
+           }
+         // Monday: skip first 30 min of session (16:30–16:59)
+         if(dow == 1 && ilTotal < 17 * 60)
+           {
+            Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+                  " — trading BLOCKED (Monday open buffer until 17:00 IL)");
+            return(false);
+           }
+        }
+      else
+        {
+         Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+               " — trading BLOCKED (symbol not in approved list)");
          return(false);
+        }
+
+      // Friday: no new trades at or after 19:00 IL
+      if(dow == 5 && ilHour >= 19)
+        {
+         Print(EA_NAME + ": ", _Symbol, " ", timeStr,
+               " — trading BLOCKED (Friday cutoff 19:00 IL)");
+         return(false);
+        }
      }
 
    // --- Daily 10% hard kill switch ---
@@ -468,6 +542,7 @@ bool IsTradingAllowed()
         }
      }
 
+   Print(EA_NAME + ": ", _Symbol, " ", timeStr, " — trading ALLOWED");
    return(true);
   }
 
@@ -714,6 +789,31 @@ void CloseAllTrades()
       bool   closed     = OrderClose(OrderTicket(), OrderLots(), closePrice, 3, clrRed);
       if(!closed)
          Print(EA_NAME + ": Failed to close ticket ", OrderTicket(),
+               " error=", GetLastError());
+     }
+  }
+
+//--- 6h. CloseAllTradesEOD -------------------------------------------
+// Market-closes every open order belonging to this EA on this symbol
+// at end of day (22:00 IL). Prints per-order confirmation lines.
+void CloseAllTradesEOD()
+  {
+   Print(EA_NAME + ": EOD close triggered — server ",
+         StringFormat("%02d:%02d", TimeHour(TimeCurrent()), TimeMinute(TimeCurrent())));
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber)        continue;
+      if(OrderSymbol()      != _Symbol)               continue;
+
+      string sym        = OrderSymbol();
+      double closePrice = (OrderType() == OP_BUY) ? Bid : Ask;
+      bool   closed     = OrderClose(OrderTicket(), OrderLots(), closePrice, 3, clrOrange);
+      if(closed)
+         Print("EOD close: ", sym, " at ", DoubleToString(closePrice, _Digits));
+      else
+         Print(EA_NAME + ": EOD close failed ticket=", OrderTicket(),
                " error=", GetLastError());
      }
   }
