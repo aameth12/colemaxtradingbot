@@ -25,9 +25,9 @@
 // --- Trade sizing ---
 input double InpLotSize         = 0.01;   // Fixed lot size (used when InpUseRiskPct = false)
 input bool   InpUseRiskPct      = true;   // Use risk-% based lot sizing instead of fixed
-input double InpRiskPct         = 1.0;    // % of balance to risk per trade (e.g. 1.0 = 1%)
+input double InpRiskPct         = 2.0;    // % of balance to risk per trade (e.g. 2.0 = 2%)
 input double InpMinLot          = 0.01;   // Minimum allowed lot size
-input double InpMaxLot          = 5.0;    // Maximum allowed lot size
+input double InpMaxLot          = 2.0;    // Maximum allowed lot size
 
 // --- Stop loss / take profit ---
 input int    InpSLPips          = 20;     // Stop loss in pips
@@ -90,7 +90,7 @@ input int    InpFridayCutoffHr  = 18;     // Last hour to open trades on Friday
 // --- Risk / kill switch ---
 input double InpMaxDailyDrawPct = 5.0;    // Daily drawdown % that triggers kill switch
 input int    InpMaxDailyTrades  = 10;     // Maximum trades allowed per day
-input int    InpMagicNumber     = 20240001; // Unique EA identifier — change if running multiple EAs
+input int    InpMagicNumber     = 20250101; // Unique EA identifier — change if running multiple EAs
 
 
 //+------------------------------------------------------------------+
@@ -314,15 +314,60 @@ void OnTick()
       return;
      }
 
-   // --- Signal evaluation ---
-   // TODO: add "no existing trade in same direction" guard before calling OrderSend.
-   if(BullishSignal())
+   // --- Open-trade direction guard ---
+   bool hasOpenBuy  = false;
+   bool hasOpenSell = false;
+   for(int i = 0; i < OrdersTotal(); i++)
      {
-      // TODO: calculate entry, SL, TP via GetLotSize() / ATR, then OrderSend BUY.
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber)        continue;
+      if(OrderSymbol()      != _Symbol)               continue;
+      if(OrderType() == OP_BUY)  hasOpenBuy  = true;
+      if(OrderType() == OP_SELL) hasOpenSell = true;
      }
-   else if(BearishSignal())
+
+   // --- Signal evaluation ---
+   if(BullishSignal() && !hasOpenBuy)
      {
-      // TODO: calculate entry, SL, TP via GetLotSize() / ATR, then OrderSend SELL.
+      // SL: lowest low of last 5 closed candles minus ATR*0.5
+      double slLow  = Low[iLowest(NULL, 0, MODE_LOW, 5, 1)];
+      double slBuy  = NormalizeDouble(slLow - g_atr * 0.5, _Digits);
+      double slDist = Ask - slBuy;
+      double tpBuy  = NormalizeDouble(Ask + slDist * 2.0, _Digits);
+      double slPips = slDist / g_pipValue;
+      double lots   = GetLotSize(slPips);
+
+      int ticket = OrderSend(_Symbol, OP_BUY, lots, Ask, 3, slBuy, tpBuy,
+                             "ATradeBot", InpMagicNumber, 0, clrGreen);
+      if(ticket > 0)
+        {
+         g_dailyTradeCount++;
+         Print(EA_NAME + ": BUY opened ticket=", ticket,
+               " lots=", lots, " sl=", slBuy, " tp=", tpBuy);
+        }
+      else
+         Print(EA_NAME + ": BUY OrderSend failed error=", GetLastError());
+     }
+   else if(BearishSignal() && !hasOpenSell)
+     {
+      // SL: highest high of last 5 closed candles plus ATR*0.5
+      double slHigh  = High[iHighest(NULL, 0, MODE_HIGH, 5, 1)];
+      double slSell  = NormalizeDouble(slHigh + g_atr * 0.5, _Digits);
+      double slDist  = slSell - Bid;
+      double tpSell  = NormalizeDouble(Bid - slDist * 2.0, _Digits);
+      double slPips  = slDist / g_pipValue;
+      double lots    = GetLotSize(slPips);
+
+      int ticket = OrderSend(_Symbol, OP_SELL, lots, Bid, 3, slSell, tpSell,
+                             "ATradeBot", InpMagicNumber, 0, clrRed);
+      if(ticket > 0)
+        {
+         g_dailyTradeCount++;
+         Print(EA_NAME + ": SELL opened ticket=", ticket,
+               " lots=", lots, " sl=", slSell, " tp=", tpSell);
+        }
+      else
+         Print(EA_NAME + ": SELL OrderSend failed error=", GetLastError());
      }
   }
 
@@ -405,31 +450,49 @@ bool IsTradingAllowed()
          return(false);
      }
 
-   // TODO: add spread filter (reject if current spread > X pips)
-   // TODO: add minimum bar volatility check (reject low-ATR environments)
+   // --- Daily 10% hard kill switch ---
+   // If total loss since session open reaches 10% of opening balance, halt
+   // all trading, close all open positions, and block until the next day.
+   if(g_dailyStartBalance > 0)
+     {
+      double dailyLossPct = (g_dailyStartBalance - AccountEquity()) /
+                             g_dailyStartBalance * 100.0;
+      if(dailyLossPct >= 10.0)
+        {
+         g_killSwitch = true;
+         g_killReason = StringFormat("Daily loss %.2f%% reached hard limit 10%%",
+                                     dailyLossPct);
+         Print(EA_NAME + " KILL SWITCH: ", g_killReason);
+         CloseAllTrades();
+         return(false);
+        }
+     }
 
    return(true);
   }
 
 
 //--- 6c. GetLotSize --------------------------------------------------
-// Returns a lot size based on the account balance and the current ATR-
-// derived stop loss distance, clamped to InpMinLot / InpMaxLot.
+// Returns a lot size based on account balance, risk %, and SL distance.
+// Formula: lots = (balance * riskPct) / (slPips * pipValuePerLot)
+// Clamped to hard limits: min 0.01, max 2.0 lots.
 // Falls back to InpLotSize when InpUseRiskPct is false.
-double GetLotSize()
+double GetLotSize(double slPips)
   {
    if(!InpUseRiskPct)
       return(InpLotSize);
+   if(slPips <= 0)
+      return(InpLotSize);
 
-   // TODO: implement risk-based sizing:
-   //   riskAmount  = AccountBalance() * InpRiskPct / 100.0
-   //   slDistance  = InpUseATRStops ? g_atr * InpATRSLMulti : InpSLPips * g_pipValue
-   //   tickValue   = MarketInfo(_Symbol, MODE_TICKVALUE)
-   //   tickSize    = MarketInfo(_Symbol, MODE_TICKSIZE)
-   //   lotSize     = riskAmount / (slDistance / tickSize * tickValue)
-   //   return MathMax(InpMinLot, MathMin(InpMaxLot, NormalizeDouble(lotSize, 2)))
+   double riskAmount     = AccountBalance() * InpRiskPct / 100.0;
+   double tickValue      = MarketInfo(_Symbol, MODE_TICKVALUE);
+   double tickSize       = MarketInfo(_Symbol, MODE_TICKSIZE);
+   double pipValuePerLot = (tickSize > 0) ? tickValue * g_pipValue / tickSize : tickValue;
+   if(pipValuePerLot <= 0)
+      return(InpLotSize);
 
-   return(InpLotSize);   // placeholder until TODO above is implemented
+   double lots = riskAmount / (slPips * pipValuePerLot);
+   return(MathMax(0.01, MathMin(2.0, NormalizeDouble(lots, 2))));
   }
 
 
@@ -555,21 +618,82 @@ bool BearishSignal()
 // and symbol) and applies trailing stop and breakeven logic.
 void ManageOpenTrades()
   {
-   // TODO: implement per-order management:
-   //
-   //   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   //     {
-   //       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-   //       if(OrderMagicNumber() != InpMagicNumber)        continue;
-   //       if(OrderSymbol()      != _Symbol)               continue;
-   //
-   //       double currentProfit = OrderType() == OP_BUY
-   //                              ? Bid - OrderOpenPrice()
-   //                              : OrderOpenPrice() - Ask;
-   //
-   //       // Breakeven: once InpBreakevenPips in profit, move SL to open price.
-   //       // Trailing:  once InpTrailStartPips in profit, trail SL by InpTrailStepPips.
-   //     }
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber)        continue;
+      if(OrderSymbol()      != _Symbol)               continue;
+
+      double openPrice = OrderOpenPrice();
+      double currentSL = OrderStopLoss();
+      double currentTP = OrderTakeProfit();
+      double slDist    = MathAbs(openPrice - currentSL);
+      double newSL     = currentSL;
+      bool   modified  = false;
+
+      if(OrderType() == OP_BUY)
+        {
+         double profitDist = Bid - openPrice;
+
+         // Breakeven: move SL to entry once profit >= 1x original SL distance.
+         if(InpUseBreakeven && slDist > 0 &&
+            profitDist >= slDist && currentSL < openPrice)
+           {
+            newSL    = openPrice;
+            modified = true;
+           }
+
+         // Trailing stop: trail SL by ATR*1.5 once price is above entry.
+         if(InpUseTrailing && profitDist > 0)
+           {
+            double trailSL = NormalizeDouble(Bid - g_atr * 1.5, _Digits);
+            if(trailSL > newSL)
+              {
+               newSL    = trailSL;
+               modified = true;
+              }
+           }
+
+         if(modified && newSL > currentSL)
+           {
+            newSL = NormalizeDouble(newSL, _Digits);
+            if(!OrderModify(OrderTicket(), openPrice, newSL, currentTP, 0, clrBlue))
+               Print(EA_NAME + ": OrderModify BUY failed ticket=",
+                     OrderTicket(), " error=", GetLastError());
+           }
+        }
+      else if(OrderType() == OP_SELL)
+        {
+         double profitDist = openPrice - Ask;
+
+         // Breakeven: move SL to entry once profit >= 1x original SL distance.
+         if(InpUseBreakeven && slDist > 0 &&
+            profitDist >= slDist && currentSL > openPrice)
+           {
+            newSL    = openPrice;
+            modified = true;
+           }
+
+         // Trailing stop: trail SL by ATR*1.5 once price is below entry.
+         if(InpUseTrailing && profitDist > 0)
+           {
+            double trailSL = NormalizeDouble(Ask + g_atr * 1.5, _Digits);
+            if(currentSL == 0 || trailSL < newSL)
+              {
+               newSL    = trailSL;
+               modified = true;
+              }
+           }
+
+         if(modified && (currentSL == 0 || newSL < currentSL))
+           {
+            newSL = NormalizeDouble(newSL, _Digits);
+            if(!OrderModify(OrderTicket(), openPrice, newSL, currentTP, 0, clrBlue))
+               Print(EA_NAME + ": OrderModify SELL failed ticket=",
+                     OrderTicket(), " error=", GetLastError());
+           }
+        }
+     }
   }
 
 
@@ -580,19 +704,18 @@ void CloseAllTrades()
   {
    Print(EA_NAME + ": CloseAllTrades() triggered. Reason: ", g_killReason);
 
-   // TODO: implement order closure loop:
-   //
-   //   for(int i = OrdersTotal() - 1; i >= 0; i--)
-   //     {
-   //       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-   //       if(OrderMagicNumber() != InpMagicNumber)        continue;
-   //       if(OrderSymbol()      != _Symbol)               continue;
-   //
-   //       double closePrice = OrderType() == OP_BUY ? Bid : Ask;
-   //       bool   closed     = OrderClose(OrderTicket(), OrderLots(), closePrice, 3, clrRed);
-   //       if(!closed)
-   //          Print(EA_NAME + ": Failed to close ticket ", OrderTicket(), " Error: ", GetLastError());
-   //     }
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+     {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber)        continue;
+      if(OrderSymbol()      != _Symbol)               continue;
+
+      double closePrice = (OrderType() == OP_BUY) ? Bid : Ask;
+      bool   closed     = OrderClose(OrderTicket(), OrderLots(), closePrice, 3, clrRed);
+      if(!closed)
+         Print(EA_NAME + ": Failed to close ticket ", OrderTicket(),
+               " error=", GetLastError());
+     }
   }
 
 //+------------------------------------------------------------------+
