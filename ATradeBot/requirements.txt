@@ -1,0 +1,33 @@
+# ATradeBot — Python dependencies
+# Broker: Colemax | Assets: XAUUSD, AAPL, TSLA, NVDA, AMZN
+# Timeframes: M5, M15 | Bridge: ZeroMQ (MT4 <-> Python)
+
+# HTTP and data
+requests>=2.31.0
+pandas>=2.1.0
+numpy>=1.26.0
+
+# Telegram notifications
+python-telegram-bot>=20.7
+
+# WebSocket (live price feeds / broker WS API)
+websocket-client>=1.7.0
+
+# Task scheduling
+schedule>=1.2.1
+
+# Dashboard (Flask for lightweight REST, Dash for reactive UI — both included)
+flask>=3.0.0
+dash>=2.16.0
+
+# MT4 bridge via ZeroMQ (EA uses DWX_ZeroMQ_Connector on the MT4 side)
+pyzmq>=25.1.2
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Logging with color support
+loguru>=0.7.2
+
+# MetaTrader 5 terminal bridge (Windows only — uncomment if running on Windows)
+# MetaTrader5>=5.0.45

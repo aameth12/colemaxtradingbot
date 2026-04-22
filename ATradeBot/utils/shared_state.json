@@ -1,0 +1,80 @@
+{
+  "_comment": "Shared state file — read/written by Python agents; optionally polled by EA via file bridge. Do not commit live state; this is a template.",
+  "kill_switch": false,
+  "kill_switch_reason": "",
+  "account_info": {
+    "balance": 0.0,
+    "equity": 0.0,
+    "margin": 0.0,
+    "free_margin": 0.0,
+    "margin_level_pct": 0.0,
+    "drawdown_pct": 0.0,
+    "currency": "USD",
+    "last_updated": ""
+  },
+  "current_positions": {},
+  "last_signals": {
+    "XAUUSD": {
+      "action": "",
+      "confidence": 0.0,
+      "timeframe": "",
+      "generated_at": "",
+      "strategy": ""
+    },
+    "AAPL": {
+      "action": "",
+      "confidence": 0.0,
+      "timeframe": "",
+      "generated_at": "",
+      "strategy": ""
+    },
+    "TSLA": {
+      "action": "",
+      "confidence": 0.0,
+      "timeframe": "",
+      "generated_at": "",
+      "strategy": ""
+    },
+    "NVDA": {
+      "action": "",
+      "confidence": 0.0,
+      "timeframe": "",
+      "generated_at": "",
+      "strategy": ""
+    },
+    "AMZN": {
+      "action": "",
+      "confidence": 0.0,
+      "timeframe": "",
+      "generated_at": "",
+      "strategy": ""
+    }
+  },
+  "market_data": {
+    "XAUUSD": {"bid": 0.0, "ask": 0.0, "spread": 0.0, "last_tick": ""},
+    "AAPL":   {"bid": 0.0, "ask": 0.0, "spread": 0.0, "last_tick": ""},
+    "TSLA":   {"bid": 0.0, "ask": 0.0, "spread": 0.0, "last_tick": ""},
+    "NVDA":   {"bid": 0.0, "ask": 0.0, "spread": 0.0, "last_tick": ""},
+    "AMZN":   {"bid": 0.0, "ask": 0.0, "spread": 0.0, "last_tick": ""}
+  },
+  "agent_statuses": {
+    "data_agent":      {"running": false, "last_heartbeat": "", "error": ""},
+    "strategy_agent":  {"running": false, "last_heartbeat": "", "error": ""},
+    "risk_agent":      {"running": false, "last_heartbeat": "", "error": ""},
+    "execution_agent": {"running": false, "last_heartbeat": "", "error": ""},
+    "news_agent":      {"running": false, "last_heartbeat": "", "error": ""},
+    "telegram_agent":  {"running": false, "last_heartbeat": "", "error": ""},
+    "dashboard_agent": {"running": false, "last_heartbeat": "", "error": ""}
+  },
+  "news_events": {
+    "next_high_impact": "",
+    "trading_halted_for_news": false
+  },
+  "performance": {
+    "total_trades_today": 0,
+    "winning_trades_today": 0,
+    "losing_trades_today": 0,
+    "pnl_today": 0.0,
+    "max_drawdown_today_pct": 0.0
+  }
+}
