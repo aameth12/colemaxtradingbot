@@ -4,6 +4,8 @@
 
 # HTTP and data
 requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
 pandas>=2.1.0
 numpy>=1.26.0
 
@@ -31,6 +33,9 @@ pyzmq>=25.1.2
 
 # Environment variable management
 python-dotenv>=1.0.0
+
+# Windows timezone database (required by ZoneInfo on Windows)
+tzdata>=2024.1
 
 # Logging with color support
 loguru>=0.7.2
