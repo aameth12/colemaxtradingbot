@@ -15,8 +15,8 @@ yfinance>=0.2.36
 # Technical indicators (free — pure Python / pandas)
 pandas_ta>=0.3.14b
 
-# Telegram notifications
-python-telegram-bot>=20.7
+# Telegram notifications (job-queue extra pulls in APScheduler for periodic jobs)
+python-telegram-bot[job-queue]>=20.7
 
 # WebSocket (live price feeds / broker WS API)
 websocket-client>=1.7.0
