@@ -1,8 +1,8 @@
 //+------------------------------------------------------------------+
 //|                                                    ATradeBot.mq4 |
-//|                                         ATradeBot — Colemax MT4  |
+//|                                           ATradeBot — ATrade MT4  |
 //|                                                                   |
-//| Broker     : Colemax                                              |
+//| Broker     : ATrade                                               |
 //| Assets     : XAUUSD, AAPL, TSLA, NVDA, AMZN (Stock CFDs)        |
 //| Timeframes : M5 (primary signal), M15 (trend filter)             |
 //| Style      : Scalping                                             |
@@ -202,7 +202,7 @@ int OnInit()
 
    // --- Compute pip value for this symbol ---
    // Most 5-digit brokers: _Digits == 5 for FX, == 3 for JPY pairs, varies for CFDs.
-   // For XAUUSD on Colemax _Digits is typically 2 (price quoted to 0.01).
+   // For XAUUSD on ATrade _Digits is typically 2 (price quoted to 0.01).
    g_pipValue = (_Digits == 5 || _Digits == 3) ? _Point * 10 : _Point;
 
    // --- Seed daily tracking ---
@@ -214,7 +214,7 @@ int OnInit()
    Print(EA_NAME + " v", __MQLBUILD__, "  started");
    Print("Symbol       : ", _Symbol);
    Print("Timeframe    : ", Period(), " min");
-   Print("Broker       : Colemax");
+   Print("Broker       : ATrade");
    Print("Magic number : ", InpMagicNumber);
    Print("Lot sizing   : ", InpUseRiskPct ? "Risk-based (" + DoubleToString(InpRiskPct, 1) + "%)" : "Fixed (" + DoubleToString(InpLotSize, 2) + " lots)");
    Print("SL/TP mode   : ", InpUseATRStops ? "ATR-based" : "Fixed pips");

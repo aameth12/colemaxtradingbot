@@ -1,6 +1,6 @@
 # ATradeBot
 
-An automated scalping bot for MetaTrader 4 on a **Colemax** brokerage account. The bot combines an MQL4 Expert Advisor (EA) running inside MT4 with a Python multi-agent backend connected via ZeroMQ. It trades **XAUUSD, AAPL, TSLA, NVDA, and AMZN** on M5 and M15 timeframes.
+An automated scalping bot for MetaTrader 4 on an **ATrade** brokerage account. The bot combines an MQL4 Expert Advisor (EA) running inside MT4 with a Python multi-agent backend connected via ZeroMQ. It trades **XAUUSD, AAPL, TSLA, NVDA, and AMZN** on M5 and M15 timeframes.
 
 ---
 
@@ -75,7 +75,7 @@ All agents communicate through a single JSON file (`utils/shared_state.json`). T
 |---|---|---|
 | Python | 3.11+ | 3.10 minimum (uses `zoneinfo`, `match`) |
 | MetaTrader 4 | Any | Must be running on **Windows** |
-| MT4 terminal | Colemax account | Any MT4 broker works |
+| MT4 terminal | ATrade account | Any MT4 broker works |
 | ZeroMQ for MT4 | DWX_ZeroMQ_Connector | Free, see setup below |
 | Telegram account | Any | To create the bot |
 
@@ -88,8 +88,8 @@ All agents communicate through a single JSON file (`utils/shared_state.json`). T
 ### Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/aameth12/colemaxtradingbot.git
-cd colemaxtradingbot
+git clone https://github.com/aameth12/atrade.git
+cd atrade
 ```
 
 ### Step 2 — Install Python 3.11+
@@ -359,7 +359,7 @@ Every Saturday at 09:00 (system local time), `weekly_learning.py` runs automatic
 ## Project file structure
 
 ```
-colemaxtradingbot/
+atrade/
 │
 ├── README.md                        ← you are here
 │

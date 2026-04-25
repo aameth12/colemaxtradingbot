@@ -1,5 +1,5 @@
 # ATradeBot — Python dependencies
-# Broker: Colemax | Assets: XAUUSD, AAPL, TSLA, NVDA, AMZN
+# Broker: ATrade | Assets: XAUUSD, AAPL, TSLA, NVDA, AMZN
 # Timeframes: M5, M15 | Bridge: ZeroMQ (MT4 <-> Python)
 
 # HTTP and data
